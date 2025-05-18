@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio§ *Audio Silence Segmentation*</title>
+    <style>
+        #audioLoadingOverlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #00000046;
+            z-index: 1000;
+            text-align: center;
+            padding-top: 20%;
+            color: black;
+        }
+
+        #jsonLoader {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Audio§ *Audio Silence Segmentation*</h1>
+    <hr>
+    <div id="audioLoadingOverlay">Loading Audio...</div>
+    <div>
+        <div>
+            <label>.WAV</label>
+            <input type="file" id="audioInput" accept="audio/*">
+        </div>
+        <br>
+        <div>
+            <label>.JSON</label>
+            <input type="file" id="jsonInput" accept=".json">
+        </div>
+        <br>
+        <button onclick="zoomIn()">+</button>
+        <button onclick="zoomOut()">−</button>
+        <span id="jsonLoader">Loading JSON...</span>
+    </div>
+    <hr>
+    <div id="waveform"></div>
+
+    <script src="https://unpkg.com/wavesurfer.js@7"></script>
+    <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
+    <script>
+        const regionsPlugin = new WaveSurfer.Regions();
+        const wavesurfer = WaveSurfer.create({
+            splitChannels: true,
+            container: '#waveform',
+            waveColor: '#4a74a4',
+            progressColor: '#2a3f5f',
+            height: 100,
+            plugins: [
+                regionsPlugin
+            ]
+        });
+
+        const audioLoadingOverlay = document.getElementById('audioLoadingOverlay');
+        const jsonLoader = document.getElementById('jsonLoader');
+        let zoomLevel = 100;
+
+        function zoomIn() {
+            zoomLevel = Math.min(zoomLevel + 50, 1000);
+            wavesurfer.zoom(zoomLevel);
+        }
+
+        function zoomOut() {
+            zoomLevel = Math.max(zoomLevel - 50, 5);
+            wavesurfer.zoom(zoomLevel);
+        }
+
+        document.getElementById('audioInput').addEventListener('change', function (e) {
+            const file = e.target.files[0];
+            if (file) {
+                audioLoadingOverlay.style.display = 'block';
+                const url = URL.createObjectURL(file);
+                wavesurfer.load(url);
+            }
+        });
+
+        document.getElementById('jsonInput').addEventListener('change', function (e) {
+            const file = e.target.files[0];
+            if (file) {
+                jsonLoader.style.display = 'inline';
+                const reader = new FileReader();
+                reader.onload = function (event) {
+                    try {
+                        const regions = JSON.parse(event.target.result);
+                        regionsPlugin.clearRegions();
+                        regions.forEach(region => {
+                            regionsPlugin.addRegion({
+                                start: parseFloat(region.silence_start),
+                                end: parseFloat(region.silence_end),
+                                color: "rgba(255, 0, 0, 0.3)",
+                                drag: false,
+                                resize: false
+                            });
+                        });
+                        jsonLoader.style.display = 'none';
+                    } catch (error) {
+                        alert('Invalid JSON file: ' + error.message);
+                        jsonLoader.style.display = 'none';
+                    }
+                };
+                reader.onerror = function () {
+                    alert('Error reading JSON file');
+                    jsonLoader.style.display = 'none';
+                };
+                reader.readAsText(file);
+            }
+        });
+
+        wavesurfer.on('ready', function () {
+            audioLoadingOverlay.style.display = 'none';
+            wavesurfer.zoom(zoomLevel);
+            URL.revokeObjectURL(wavesurfer.getMediaElement().src);
+        });
+
+        wavesurfer.on('error', function (error) {
+            alert('Error loading audio: ' + error);
+            audioLoadingOverlay.style.display = 'none';
+        });
+    </script>
+</body>
+
+</html>
