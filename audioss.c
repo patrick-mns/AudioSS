@@ -29,88 +29,69 @@
 
 #define MAX_EVENTS 256
 
+static void record_silence_event(SilenceThreadData* data, size_t silence_start, size_t silence_end) {
+    WavAudio16* audio = data->audio;
+    int min_samples = (int)ceil(data->min_duration * audio->sample_rate);
+
+    size_t dur = silence_end - silence_start;
+    if ((int)dur < min_samples) return;
+
+    double silence_start_sec = (double)silence_start / audio->sample_rate;
+    double silence_end_sec = (double)silence_end / audio->sample_rate;
+    double silence_duration = silence_end_sec - silence_start_sec;
+
+    if (data->verbose) {
+        printf("[Audio§ silencedetect @ %p] [channel: %i] silence_start: %f | silence_end: %f | silence_duration: %f\n",
+               (void*)data, data->channel, silence_start_sec, silence_end_sec, silence_duration);
+    }
+
+    pthread_mutex_lock(data->mutex);
+    if (data->res->count >= data->res->max_events) {
+        size_t new_max = data->res->max_events * 2;
+        if (new_max <= data->res->max_events) {
+            pthread_mutex_unlock(data->mutex);
+            return; 
+        }
+        SilenceEvent* tmp = realloc(data->res->events, sizeof(SilenceEvent) * new_max);
+        if (!tmp) {
+            pthread_mutex_unlock(data->mutex);
+            return; 
+        }
+        data->res->events = tmp;
+        data->res->max_events = new_max;
+    }
+    data->res->events[data->res->count++] = (SilenceEvent){
+        .silence_start = silence_start_sec,
+        .silence_end = silence_end_sec,
+        .silence_duration = silence_duration,
+        .channel = data->channel
+    };
+    pthread_mutex_unlock(data->mutex);
+}
+
 void* detect_silence_channel(void* arg) {
     SilenceThreadData* data = (SilenceThreadData*)arg;
     WavAudio16* audio = data->audio;
     int threshold = data->threshold;
-    float min_duration = data->min_duration;
-    SilenceResult* res = data->res;
 
     size_t frames = audio->total_samples / audio->num_channels;
-    int min_samples = (int)(min_duration * audio->sample_rate);
-    int ch = data->channel;
-
     int in_silence = 0;
     size_t silence_start = 0;
 
     for (size_t i = 0; i < frames; i++) {
-        int16_t sample = audio->samples[i * audio->num_channels + ch];
+        int16_t sample = audio->samples[i * audio->num_channels + data->channel];
         if (abs(sample) <= threshold) {
             if (!in_silence) {
                 in_silence = 1;
                 silence_start = i;
             }
         } else if (in_silence) {
-            size_t dur = i - silence_start;
-            if ((int)dur >= min_samples) {
-                double silence_end = (double)i / audio->sample_rate;
-                double silence_duration = silence_end - (double)silence_start / audio->sample_rate;
-
-                if (data->verbose == 1) {
-                    printf("[Audio§ silencedetect @ %p] [channel: %i] silence_start: %f | silence_end: %f | silence_duration: %f\n",
-                           (void*)data, ch,
-                           (double)silence_start / audio->sample_rate,
-                           silence_end,
-                           silence_duration);
-                }
-
-                pthread_mutex_lock(data->mutex);
-                if (res->count >= res->max_events) {
-                    res->max_events *= 2;
-                    void* tmp = realloc(res->events, sizeof(SilenceEvent) * res->max_events);
-                    if (tmp == NULL) exit(EXIT_FAILURE);
-                    res->events = tmp;
-                }
-                res->events[res->count++] = (SilenceEvent){
-                    .silence_start = (double)silence_start / audio->sample_rate,
-                    .silence_end = silence_end,
-                    .silence_duration = silence_duration,
-                    .channel = ch
-                };
-                pthread_mutex_unlock(data->mutex);
-            }
+            record_silence_event(data, silence_start, i);
             in_silence = 0;
         }
     }
     if (in_silence) {
-        size_t dur = frames - silence_start;
-        if ((int)dur >= min_samples) {
-            double silence_end = (double)frames / audio->sample_rate;
-            double silence_duration = silence_end - (double)silence_start / audio->sample_rate;
-
-            if (data->verbose == 1) {
-                printf("[Audio§ silencedetect @ %p] [channel: %i] silence_start: %f | silence_end: %f | silence_duration: %f\n",
-                       (void*)data, ch,
-                       (double)silence_start / audio->sample_rate,
-                       silence_end,
-                       silence_duration);
-            }
-
-            pthread_mutex_lock(data->mutex);
-            if (res->count >= res->max_events) {
-                res->max_events *= 2;
-                void* tmp = realloc(res->events, sizeof(SilenceEvent) * res->max_events);
-                if (tmp == NULL) exit(EXIT_FAILURE);
-                res->events = tmp;
-            }
-            res->events[res->count++] = (SilenceEvent){
-                .silence_start = (double)silence_start / audio->sample_rate,
-                .silence_end = silence_end,
-                .silence_duration = silence_duration,
-                .channel = ch
-            };
-            pthread_mutex_unlock(data->mutex);
-        }
+        record_silence_event(data, silence_start, frames);
     }
 
     return NULL;
